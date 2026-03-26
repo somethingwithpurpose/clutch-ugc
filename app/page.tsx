@@ -42,6 +42,15 @@ interface AccountState {
   error: string | null
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DEFAULT_IG = ['', '', '', '']
+const DEFAULT_TT = ['', '', '', '']
+const IG_GRADIENT = 'linear-gradient(135deg, #833ab4, #fd1d1d, #fcb045)'
+const TT_COLOR = '#69C9D0'
+const HANDLES_KEY = 'ugc-handles'
+const CACHE_KEY = 'ugc-dashboard-v2'
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(n: number): string {
@@ -50,39 +59,89 @@ function fmt(n: number): string {
   return String(n)
 }
 
-// Proxy CDN images through our server so TikTok/IG CDNs don't block browser requests
 function proxyImg(url: string): string {
   if (!url) return ''
   return `/api/image-proxy?url=${encodeURIComponent(url)}`
 }
 
-// Strips any URL format down to just the bare username
 function cleanHandle(raw: string): string {
   const s = raw.trim()
   if (!s) return ''
   try {
-    // Handle full URLs like https://www.instagram.com/emmystudyz?igsh=...
-    // or https://www.tiktok.com/@emmystudyz?_r=1
     const url = new URL(s.startsWith('http') ? s : `https://x.com/${s}`)
-    // First path segment after the domain, strip leading @
     const seg = url.pathname.split('/').filter(Boolean)[0] || ''
     return seg.replace('@', '')
   } catch {
-    // Not a URL — just strip @ and whitespace
     return s.replace('@', '').split('?')[0].split('/')[0]
   }
 }
 
-const DEFAULT_IG = ['', '', '', '']
-const DEFAULT_TT = ['', '', '', '']
+// ─── ProfilePic ───────────────────────────────────────────────────────────────
 
-const IG_GRADIENT = 'linear-gradient(135deg, #833ab4, #fd1d1d, #fcb045)'
-const TT_COLOR = '#69C9D0'
+function ProfilePic({ src, username, accent, isIG }: { src: string; username: string; accent: string; isIG: boolean }) {
+  const [failed, setFailed] = useState(false)
+  if (src && !failed) {
+    return (
+      <img
+        src={proxyImg(src)}
+        alt=""
+        className="w-9 h-9 rounded-full object-cover border-2"
+        style={{ borderColor: accent }}
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+  return (
+    <div
+      className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-none"
+      style={{ background: isIG ? IG_GRADIENT : '#111', color: accent, border: `2px solid ${accent}` }}
+    >
+      {username.charAt(0).toUpperCase()}
+    </div>
+  )
+}
+
+// ─── VideoThumb ───────────────────────────────────────────────────────────────
+// Tries: proxy img → <video> first frame → gradient placeholder
+
+function VideoThumb({ thumbnail, videoUrl }: { thumbnail: string; videoUrl: string }) {
+  const [imgFailed, setImgFailed] = useState(false)
+
+  if (thumbnail && !imgFailed) {
+    return (
+      <img
+        src={proxyImg(thumbnail)}
+        alt=""
+        className="w-full h-full object-cover"
+        onError={() => setImgFailed(true)}
+      />
+    )
+  }
+
+  if (videoUrl) {
+    return (
+      <video
+        src={`${videoUrl}#t=0.5`}
+        muted
+        playsInline
+        preload="metadata"
+        className="w-full h-full object-cover"
+      />
+    )
+  }
+
+  return (
+    <div
+      className="w-full h-full"
+      style={{ background: 'linear-gradient(135deg, #18181b, #27272a)' }}
+    />
+  )
+}
 
 // ─── VideoModal ───────────────────────────────────────────────────────────────
 
 function VideoModal({ video, platform, onClose }: { video: VideoItem; platform: Platform; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
@@ -92,10 +151,10 @@ function VideoModal({ video, platform, onClose }: { video: VideoItem; platform: 
 
   return (
     <div
+      ref={backdropRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-      onClick={e => { if (e.target === ref.current) onClose() }}
+      onClick={e => { if (e.target === backdropRef.current) onClose() }}
     >
-      <div ref={ref} className="absolute inset-0" />
       <div className="relative z-10 w-full max-w-sm mx-4 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-700 shadow-2xl">
         <button
           onClick={onClose}
@@ -113,9 +172,8 @@ function VideoModal({ video, platform, onClose }: { video: VideoItem; platform: 
               className="w-full h-full object-contain"
               onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }}
             />
-          ) : null}
-          {!video.videoUrl && video.thumbnail && (
-            <img src={proxyImg(video.thumbnail)} alt="" className="w-full h-full object-cover opacity-60" />
+          ) : (
+            <VideoThumb thumbnail={video.thumbnail} videoUrl="" />
           )}
         </div>
         <div className="p-4 space-y-3">
@@ -132,7 +190,12 @@ function VideoModal({ video, platform, onClose }: { video: VideoItem; platform: 
             target="_blank"
             rel="noopener noreferrer"
             className="block w-full text-center py-2 rounded-lg text-sm font-medium transition-colors"
-            style={{ background: platform === 'instagram' ? IG_GRADIENT : undefined, backgroundColor: platform === 'tiktok' ? '#111' : undefined, color: platform === 'tiktok' ? TT_COLOR : '#fff', border: platform === 'tiktok' ? `1px solid ${TT_COLOR}33` : 'none' }}
+            style={{
+              background: platform === 'instagram' ? IG_GRADIENT : undefined,
+              backgroundColor: platform === 'tiktok' ? '#111' : undefined,
+              color: platform === 'tiktok' ? TT_COLOR : '#fff',
+              border: platform === 'tiktok' ? `1px solid ${TT_COLOR}33` : 'none',
+            }}
           >
             View on {platform === 'instagram' ? 'Instagram' : 'TikTok'} ↗
           </a>
@@ -154,16 +217,7 @@ function VideoStrip({ videos, platform, onSelect }: { videos: VideoItem[]; platf
           onClick={() => onSelect(v)}
           className="relative flex-none w-24 aspect-[9/16] rounded-xl overflow-hidden group bg-zinc-800 border border-zinc-700 hover:border-zinc-500 transition-all hover:scale-[1.03]"
         >
-          {v.thumbnail ? (
-            <img
-              src={proxyImg(v.thumbnail)}
-              alt=""
-              className="w-full h-full object-cover"
-              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-            />
-          ) : (
-            <div className="w-full h-full bg-zinc-800" />
-          )}
+          <VideoThumb thumbnail={v.thumbnail} videoUrl={v.videoUrl} />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
             <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
@@ -204,53 +258,37 @@ function AccountCard({ account, onRefresh }: { account: AccountState; onRefresh:
         <VideoModal video={selectedVideo} platform={platform} onClose={() => setSelectedVideo(null)} />
       )}
       <div
-        className="rounded-2xl border bg-zinc-900 overflow-hidden flex flex-col gap-0"
+        className="rounded-2xl border bg-zinc-900 overflow-hidden flex flex-col"
         style={{ borderColor: status === 'done' ? `${accent}33` : '#27272a' }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-          <div className="flex items-center gap-3">
-            {data?.profilePic ? (
-              <img
-                src={proxyImg(data.profilePic)}
-                alt=""
-                className="w-9 h-9 rounded-full object-cover border-2"
-                style={{ borderColor: accent }}
-              />
-            ) : (
-              <div
-                className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold"
-                style={{ background: isIG ? IG_GRADIENT : '#111', color: accent, border: `2px solid ${accent}` }}
-              >
-                {username.charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div>
+          <div className="flex items-center gap-3 min-w-0">
+            <ProfilePic src={data?.profilePic || ''} username={username} accent={accent} isIG={isIG} />
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-white font-semibold text-sm">@{username}</span>
+                <span className="text-white font-semibold text-sm truncate">@{username}</span>
                 <span
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded-full uppercase tracking-wider font-bold"
+                  className="text-[10px] font-mono px-1.5 py-0.5 rounded-full uppercase tracking-wider font-bold flex-none"
                   style={{ background: `${accent}22`, color: accent }}
                 >
-                  {platform === 'instagram' ? 'IG' : 'TT'}
+                  {isIG ? 'IG' : 'TT'}
                 </span>
               </div>
               {data?.displayName && data.displayName !== username && (
-                <p className="text-zinc-500 text-xs">{data.displayName}</p>
+                <p className="text-zinc-500 text-xs truncate">{data.displayName}</p>
               )}
             </div>
           </div>
           <button
             onClick={onRefresh}
             disabled={status === 'loading'}
-            className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed p-1 rounded"
+            className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed p-1 rounded flex-none ml-2"
             title="Refresh"
           >
             <span className={status === 'loading' ? 'inline-block animate-spin' : ''}>↻</span>
           </button>
         </div>
 
-        {/* Body */}
         <div className="p-4 flex flex-col gap-4">
           {status === 'loading' && (
             <div className="flex flex-col gap-2 py-4">
@@ -267,13 +305,14 @@ function AccountCard({ account, onRefresh }: { account: AccountState; onRefresh:
           )}
 
           {status === 'error' && (
-            <div className="py-3 text-sm text-red-400 bg-red-500/10 rounded-lg px-3 border border-red-500/20">
-              {error}
+            <div className="flex items-center justify-between py-3 px-3 text-sm text-red-400 bg-red-500/10 rounded-lg border border-red-500/20">
+              <span>{error}</span>
+              <button onClick={onRefresh} className="text-red-400 hover:text-red-300 ml-3 flex-none font-medium">Retry</button>
             </div>
           )}
 
           {status === 'idle' && (
-            <p className="text-zinc-600 text-sm py-2">Hit refresh to load data.</p>
+            <p className="text-zinc-600 text-sm py-2">Hit ↻ to load data.</p>
           )}
 
           {status === 'done' && data && (
@@ -300,22 +339,39 @@ export default function Dashboard() {
   const [ttHandles, setTtHandles] = useState<string[]>(DEFAULT_TT)
   const [accounts, setAccounts] = useState<AccountState[]>([])
   const [settingsOpen, setSettingsOpen] = useState(true)
-  const [loadedFromStorage, setLoadedFromStorage] = useState(false)
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
 
-  // Load saved handles from localStorage
+  // On mount: restore handles + cached dashboard data
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('ugc-handles')
-      if (saved) {
-        const { ig, tt } = JSON.parse(saved)
+      const savedHandles = localStorage.getItem(HANDLES_KEY)
+      if (savedHandles) {
+        const { ig, tt } = JSON.parse(savedHandles)
         if (ig) setIgHandles(ig)
         if (tt) setTtHandles(tt)
       }
+      const cached = localStorage.getItem(CACHE_KEY)
+      if (cached) {
+        const parsed: AccountState[] = JSON.parse(cached)
+        // Restore done accounts as-is; reset anything still loading/error back to idle
+        const restored = parsed.map(a => ({
+          ...a,
+          status: a.status === 'done' ? ('done' as const) : ('idle' as const),
+          error: null,
+        }))
+        setAccounts(restored)
+        setSettingsOpen(false)
+      }
     } catch {}
-    setLoadedFromStorage(true)
   }, [])
 
-  // Build accounts list from handles
+  const saveToCache = useCallback((accs: AccountState[]) => {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(accs))
+      setSavedAt(new Date())
+    } catch {}
+  }, [])
+
   const buildAccounts = useCallback((ig: string[], tt: string[]): AccountState[] => {
     const all: AccountState[] = []
     ig.forEach(u => {
@@ -329,7 +385,7 @@ export default function Dashboard() {
     return all
   }, [])
 
-  const fetchAccount = useCallback(async (username: string, platform: Platform, index: number) => {
+  const fetchAccount = useCallback(async (username: string, platform: Platform, index: number, attempt = 0) => {
     setAccounts(prev => prev.map((a, i) => i === index ? { ...a, status: 'loading', error: null } : a))
     try {
       const res = await fetch('/api/account', {
@@ -338,33 +394,41 @@ export default function Dashboard() {
         body: JSON.stringify({ username, platform }),
       })
       const text = await res.text()
+      // Auto-retry up to 2x on 503
+      if (res.status === 503 && attempt < 2) {
+        await new Promise(r => setTimeout(r, 3000 + attempt * 2000))
+        return fetchAccount(username, platform, index, attempt + 1)
+      }
       let json: any
-      try { json = JSON.parse(text) } catch { throw new Error(`Server error (${res.status}): ${text.slice(0, 200)}`) }
-      if (!res.ok) throw new Error(json.error || `Server error ${res.status}`)
-      setAccounts(prev => prev.map((a, i) => i === index ? { ...a, status: 'done', data: json, error: null } : a))
+      try { json = JSON.parse(text) } catch { throw new Error(`Server error (${res.status})`) }
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`)
+      setAccounts(prev => {
+        const updated = prev.map((a, i) => i === index ? { ...a, status: 'done' as const, data: json, error: null } : a)
+        saveToCache(updated)
+        return updated
+      })
     } catch (err: any) {
       setAccounts(prev => prev.map((a, i) => i === index ? { ...a, status: 'error', error: err.message } : a))
     }
-  }, [])
+  }, [saveToCache])
 
   const handleLoad = () => {
-    localStorage.setItem('ugc-handles', JSON.stringify({ ig: igHandles, tt: ttHandles }))
+    localStorage.setItem(HANDLES_KEY, JSON.stringify({ ig: igHandles, tt: ttHandles }))
     const accs = buildAccounts(igHandles, ttHandles)
     setAccounts(accs)
     setSettingsOpen(false)
     accs.forEach((a, i) => fetchAccount(a.username, a.platform, i))
   }
 
+  const handleSave = () => saveToCache(accounts)
+
   const igAccounts = accounts.filter(a => a.platform === 'instagram')
   const ttAccounts = accounts.filter(a => a.platform === 'tiktok')
-
-  const totalViews = accounts
-    .filter(a => a.data)
-    .reduce((s, a) => s + (a.data?.totalViews || 0), 0)
+  const totalViews = accounts.reduce((s, a) => s + (a.data?.totalViews || 0), 0)
+  const allDone = accounts.length > 0 && accounts.every(a => a.status === 'done' || a.status === 'error')
 
   return (
     <div className="min-h-screen bg-[#08080E] text-white font-sans">
-      {/* Background grid */}
       <div
         className="fixed inset-0 pointer-events-none opacity-[0.03]"
         style={{
@@ -375,39 +439,48 @@ export default function Dashboard() {
 
       <div className="relative max-w-5xl mx-auto px-4 py-8 space-y-6">
         {/* Header */}
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
               <span className="text-zinc-500 text-xs font-mono uppercase tracking-widest">Clutch UGC</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Creator Dashboard</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Creator Dashboard</h1>
             {totalViews > 0 && (
               <p className="text-zinc-500 text-sm mt-0.5 font-mono">
                 {fmt(totalViews)} total views across {accounts.filter(a => a.data).length} accounts
               </p>
             )}
           </div>
-          <button
-            onClick={() => setSettingsOpen(o => !o)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 transition-colors text-sm"
-          >
-            <span>{settingsOpen ? '↑' : '⚙'}</span>
-            <span>{settingsOpen ? 'Collapse' : 'Edit Accounts'}</span>
-          </button>
+          <div className="flex items-center gap-2 flex-none">
+            {/* Save button — shown when there's data to save */}
+            {accounts.some(a => a.status === 'done') && (
+              <button
+                onClick={handleSave}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm transition-colors"
+                style={{ borderColor: '#22d3ee44', color: '#22d3ee' }}
+              >
+                <span>💾</span>
+                <span>{savedAt ? 'Saved ✓' : 'Save'}</span>
+              </button>
+            )}
+            <button
+              onClick={() => setSettingsOpen(o => !o)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 transition-colors text-sm"
+            >
+              <span>{settingsOpen ? '↑' : '⚙'}</span>
+              <span>{settingsOpen ? 'Collapse' : 'Edit Accounts'}</span>
+            </button>
+          </div>
         </div>
 
         {/* Settings panel */}
         {settingsOpen && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Instagram */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-widest"
-                    style={{ background: 'linear-gradient(135deg, #833ab422, #fd1d1d22)', color: '#fd1d1d' }}
-                  >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-widest" style={{ background: 'linear-gradient(135deg, #833ab422, #fd1d1d22)', color: '#fd1d1d' }}>
                     Instagram
                   </span>
                   <span className="text-zinc-600 text-xs">up to 4 accounts</span>
@@ -429,13 +502,9 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* TikTok */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-widest"
-                    style={{ background: `${TT_COLOR}22`, color: TT_COLOR }}
-                  >
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-widest" style={{ background: `${TT_COLOR}22`, color: TT_COLOR }}>
                     TikTok
                   </span>
                   <span className="text-zinc-600 text-xs">up to 4 accounts</span>
@@ -470,21 +539,17 @@ export default function Dashboard() {
         {/* Account grid */}
         {accounts.length > 0 && (
           <div className="space-y-6">
-            {/* Instagram section */}
             {igAccounts.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="h-px flex-1 bg-zinc-800" />
-                  <span
-                    className="text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded"
-                    style={{ background: 'linear-gradient(135deg, #833ab444, #fd1d1d44)', color: '#fd1d1d' }}
-                  >
+                  <span className="text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded" style={{ background: 'linear-gradient(135deg, #833ab444, #fd1d1d44)', color: '#fd1d1d' }}>
                     Instagram
                   </span>
                   <div className="h-px flex-1 bg-zinc-800" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {igAccounts.map((acc, i) => (
+                  {igAccounts.map(acc => (
                     <AccountCard
                       key={`ig-${acc.username}`}
                       account={acc}
@@ -495,21 +560,17 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* TikTok section */}
             {ttAccounts.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="h-px flex-1 bg-zinc-800" />
-                  <span
-                    className="text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded"
-                    style={{ background: `${TT_COLOR}22`, color: TT_COLOR }}
-                  >
+                  <span className="text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded" style={{ background: `${TT_COLOR}22`, color: TT_COLOR }}>
                     TikTok
                   </span>
                   <div className="h-px flex-1 bg-zinc-800" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {ttAccounts.map((acc, i) => (
+                  {ttAccounts.map(acc => (
                     <AccountCard
                       key={`tt-${acc.username}`}
                       account={acc}
@@ -522,7 +583,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Empty state */}
         {accounts.length === 0 && !settingsOpen && (
           <div className="text-center py-20 text-zinc-600">
             <p className="text-4xl mb-3 opacity-20">◉</p>
