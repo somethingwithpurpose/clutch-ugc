@@ -22,6 +22,7 @@ async function pollRun(runId: string, datasetId: string): Promise<string> {
     const res = await fetch(`https://api.apify.com/v2/actor-runs/${runId}`, {
       headers: { Authorization: `Bearer ${APIFY_TOKEN}` },
     })
+    if (!res.ok) throw new Error(`Poll failed: ${res.status}`)
     const json = await res.json()
     const { status, defaultDatasetId } = json.data
     if (status === 'SUCCEEDED') return defaultDatasetId || datasetId
@@ -41,10 +42,15 @@ async function getItems(datasetId: string): Promise<any[]> {
   return res.json()
 }
 
-function formatNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
+// Runs an actor and returns dataset items — returns [] on any failure (non-blocking)
+async function runAndGetItems(actorId: string, input: object): Promise<any[]> {
+  try {
+    const { runId, datasetId } = await startRun(actorId, input)
+    const finalDatasetId = await pollRun(runId, datasetId)
+    return await getItems(finalDatasetId)
+  } catch {
+    return []
+  }
 }
 
 function processTikTok(username: string, items: any[]) {
@@ -52,8 +58,9 @@ function processTikTok(username: string, items: any[]) {
   const author = items[0]?.authorMeta || {}
   const videos = items.map((item: any) => ({
     id: item.id || String(Math.random()),
-    thumbnail: item.covers?.default || item.video?.cover || item.imageUrl || '',
-    videoUrl: item.video?.downloadAddr || '',
+    // Try multiple cover fields — some versions use different keys
+    thumbnail: item.covers?.origin || item.covers?.default || item.video?.cover || item.imageUrl || '',
+    videoUrl: item.video?.downloadAddr || item.videoMeta?.downloadAddr || '',
     postUrl: item.webVideoUrl || `https://www.tiktok.com/@${username}`,
     views: item.playCount || 0,
     likes: item.diggCount || 0,
@@ -76,30 +83,38 @@ function processTikTok(username: string, items: any[]) {
   }
 }
 
-function processInstagram(username: string, items: any[]) {
-  if (!items.length) return null
-  const profile = items.find((i: any) => i.followersCount !== undefined || i.type === 'user') || {}
-  const posts = items.filter((i: any) => i.displayUrl || i.videoUrl || i.imageUrl)
+// Instagram: profile items from "details" scrape + post items from "posts" scrape
+function processInstagram(username: string, profileItems: any[], postItems: any[]) {
+  const profile = profileItems[0] || {}
+  const posts = postItems.filter((i: any) => i.displayUrl || i.videoUrl || i.images?.length)
+
   const videos = posts.map((item: any) => ({
     id: item.id || item.shortCode || String(Math.random()),
-    thumbnail: item.displayUrl || item.thumbnailUrl || item.imageUrl || '',
+    thumbnail: item.displayUrl || item.images?.[0]?.src || item.thumbnailUrl || '',
     videoUrl: item.videoUrl || '',
-    postUrl: item.url || item.postUrl || `https://www.instagram.com/${username}/`,
+    postUrl: item.url || (item.shortCode ? `https://www.instagram.com/p/${item.shortCode}/` : `https://www.instagram.com/${username}/`),
     views: item.videoViewCount || 0,
     likes: item.likesCount || 0,
     comments: item.commentsCount || 0,
     shares: 0,
     caption: (item.caption || '').slice(0, 120),
-    isVideo: item.isVideo || !!item.videoUrl,
+    isVideo: !!item.videoUrl || item.productType === 'clips' || item.productType === 'reel' || item.isVideo === true,
   }))
+
   const videoItems = videos.filter((v: any) => v.isVideo)
   const totalViews = videoItems.reduce((s: number, v: any) => s + v.views, 0)
+
+  // Fall back to extracting display name from post metadata if profile scrape returned nothing
+  const displayName = profile.fullName || profile.name || postItems[0]?.ownerFullName || username
+  const profilePic = profile.profilePicUrlHD || profile.profilePicUrl || ''
+  const followers = profile.followersCount || 0
+
   return {
     username: username.replace('@', ''),
     platform: 'instagram',
-    displayName: profile.fullName || profile.name || username,
-    profilePic: profile.profilePicUrlHD || profile.profilePicUrl || '',
-    followers: profile.followersCount || 0,
+    displayName,
+    profilePic,
+    followers,
     totalLikes: posts.reduce((s: number, p: any) => s + (p.likesCount || 0), 0),
     totalViews,
     avgViews: videoItems.length ? Math.round(totalViews / videoItems.length) : 0,
@@ -121,17 +136,19 @@ function extractUsername(raw: string): string {
 }
 
 export async function POST(request: NextRequest) {
-  if (!APIFY_TOKEN) {
-    return Response.json({ error: 'APIFY_API_KEY not set in .env.local' }, { status: 500 })
-  }
-  let body: any
-  try { body = await request.json() } catch {
-    return Response.json({ error: 'Invalid request body' }, { status: 400 })
-  }
-  const username = extractUsername(body.username || '')
-  const platform = body.platform
-  if (!username) return Response.json({ error: 'No username provided' }, { status: 400 })
+  // Outer safety net — guarantees we never return a raw 503
   try {
+    if (!APIFY_TOKEN) {
+      return Response.json({ error: 'APIFY_API_KEY not set in .env.local' }, { status: 500 })
+    }
+    let body: any
+    try { body = await request.json() } catch {
+      return Response.json({ error: 'Invalid request body' }, { status: 400 })
+    }
+    const username = extractUsername(body.username || '')
+    const platform = body.platform
+    if (!username) return Response.json({ error: 'No username provided' }, { status: 400 })
+
     if (platform === 'tiktok') {
       const { runId, datasetId } = await startRun('clockworks~tiktok-scraper', {
         profiles: [`https://www.tiktok.com/@${username}`],
@@ -141,18 +158,23 @@ export async function POST(request: NextRequest) {
       const finalDatasetId = await pollRun(runId, datasetId)
       const items = await getItems(finalDatasetId)
       const data = processTikTok(username, items)
-      if (!data) return Response.json({ error: 'No data returned from Apify' }, { status: 404 })
+      if (!data) return Response.json({ error: 'No data returned — account may be private or not found' }, { status: 404 })
       return Response.json(data)
     } else {
-      const { runId, datasetId } = await startRun('apify~instagram-scraper', {
-        usernames: [username],
-        resultsType: 'posts',
-        resultsLimit: 12,
-      })
-      const finalDatasetId = await pollRun(runId, datasetId)
-      const items = await getItems(finalDatasetId)
-      const data = processInstagram(username, items)
-      if (!data) return Response.json({ error: 'No data returned from Apify' }, { status: 404 })
+      // Run profile + posts in parallel — profile gives followers, posts give content
+      const [profileItems, postItems] = await Promise.all([
+        runAndGetItems('apify~instagram-scraper', {
+          directUrls: [`https://www.instagram.com/${username}/`],
+          resultsType: 'details',
+          resultsLimit: 1,
+        }),
+        runAndGetItems('apify~instagram-scraper', {
+          directUrls: [`https://www.instagram.com/${username}/`],
+          resultsType: 'posts',
+          resultsLimit: 12,
+        }),
+      ])
+      const data = processInstagram(username, profileItems, postItems)
       return Response.json(data)
     }
   } catch (err: any) {

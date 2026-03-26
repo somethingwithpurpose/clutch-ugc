@@ -108,8 +108,8 @@ function VideoModal({ video, platform, onClose }: { video: VideoItem; platform: 
               onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }}
             />
           ) : null}
-          {!video.videoUrl && (
-            <img src={video.thumbnail} alt="" className="w-full h-full object-cover opacity-60" />
+          {!video.videoUrl && video.thumbnail && (
+            <img src={video.thumbnail} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover opacity-60" />
           )}
         </div>
         <div className="p-4 space-y-3">
@@ -149,7 +149,13 @@ function VideoStrip({ videos, platform, onSelect }: { videos: VideoItem[]; platf
           className="relative flex-none w-24 aspect-[9/16] rounded-xl overflow-hidden group bg-zinc-800 border border-zinc-700 hover:border-zinc-500 transition-all hover:scale-[1.03]"
         >
           {v.thumbnail ? (
-            <img src={v.thumbnail} alt="" className="w-full h-full object-cover" />
+            <img
+              src={v.thumbnail}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover"
+              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+            />
           ) : (
             <div className="w-full h-full bg-zinc-800" />
           )}
@@ -203,6 +209,7 @@ function AccountCard({ account, onRefresh }: { account: AccountState; onRefresh:
               <img
                 src={data.profilePic}
                 alt=""
+                referrerPolicy="no-referrer"
                 className="w-9 h-9 rounded-full object-cover border-2"
                 style={{ borderColor: accent }}
               />
