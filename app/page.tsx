@@ -50,6 +50,12 @@ function fmt(n: number): string {
   return String(n)
 }
 
+// Proxy CDN images through our server so TikTok/IG CDNs don't block browser requests
+function proxyImg(url: string): string {
+  if (!url) return ''
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`
+}
+
 // Strips any URL format down to just the bare username
 function cleanHandle(raw: string): string {
   const s = raw.trim()
@@ -109,7 +115,7 @@ function VideoModal({ video, platform, onClose }: { video: VideoItem; platform: 
             />
           ) : null}
           {!video.videoUrl && video.thumbnail && (
-            <img src={video.thumbnail} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover opacity-60" />
+            <img src={proxyImg(video.thumbnail)} alt="" className="w-full h-full object-cover opacity-60" />
           )}
         </div>
         <div className="p-4 space-y-3">
@@ -150,9 +156,8 @@ function VideoStrip({ videos, platform, onSelect }: { videos: VideoItem[]; platf
         >
           {v.thumbnail ? (
             <img
-              src={v.thumbnail}
+              src={proxyImg(v.thumbnail)}
               alt=""
-              referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
               onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
             />
@@ -207,9 +212,8 @@ function AccountCard({ account, onRefresh }: { account: AccountState; onRefresh:
           <div className="flex items-center gap-3">
             {data?.profilePic ? (
               <img
-                src={data.profilePic}
+                src={proxyImg(data.profilePic)}
                 alt=""
-                referrerPolicy="no-referrer"
                 className="w-9 h-9 rounded-full object-cover border-2"
                 style={{ borderColor: accent }}
               />

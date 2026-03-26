@@ -83,31 +83,39 @@ function processTikTok(username: string, items: any[]) {
   }
 }
 
-// Instagram: profile items from "details" scrape + post items from "posts" scrape
+// Instagram: profile items from profile-scraper + post items from instagram-scraper
 function processInstagram(username: string, profileItems: any[], postItems: any[]) {
   const profile = profileItems[0] || {}
-  const posts = postItems.filter((i: any) => i.displayUrl || i.videoUrl || i.images?.length)
+
+  // Accept any item that has identifiable content — be very permissive
+  let posts = postItems.filter((i: any) =>
+    i.id || i.shortCode || i.displayUrl || i.videoUrl || i.url
+  )
+
+  // Some scraper versions nest latestPosts inside the profile object
+  if (!posts.length && Array.isArray(profile.latestPosts)) {
+    posts = profile.latestPosts
+  }
 
   const videos = posts.map((item: any) => ({
     id: item.id || item.shortCode || String(Math.random()),
-    thumbnail: item.displayUrl || item.images?.[0]?.src || item.thumbnailUrl || '',
-    videoUrl: item.videoUrl || '',
-    postUrl: item.url || (item.shortCode ? `https://www.instagram.com/p/${item.shortCode}/` : `https://www.instagram.com/${username}/`),
-    views: item.videoViewCount || 0,
-    likes: item.likesCount || 0,
-    comments: item.commentsCount || 0,
+    thumbnail: item.displayUrl || item.thumbnailSrc || item.images?.[0]?.src || item.thumbnailUrl || item.previewUrl || '',
+    videoUrl: item.videoUrl || item.videoSrc || '',
+    postUrl: item.url || item.postUrl || (item.shortCode ? `https://www.instagram.com/p/${item.shortCode}/` : `https://www.instagram.com/${username}/`),
+    views: item.videoViewCount || item.playCount || 0,
+    likes: item.likesCount || item.likeCount || 0,
+    comments: item.commentsCount || item.commentCount || 0,
     shares: 0,
-    caption: (item.caption || '').slice(0, 120),
-    isVideo: !!item.videoUrl || item.productType === 'clips' || item.productType === 'reel' || item.isVideo === true,
+    caption: (item.caption || item.text || '').slice(0, 120),
+    isVideo: !!item.videoUrl || !!item.videoSrc || item.productType === 'clips' || item.productType === 'reel' || item.type === 'Video' || item.isVideo === true,
   }))
 
   const videoItems = videos.filter((v: any) => v.isVideo)
   const totalViews = videoItems.reduce((s: number, v: any) => s + v.views, 0)
 
-  // Fall back to extracting display name from post metadata if profile scrape returned nothing
   const displayName = profile.fullName || profile.name || postItems[0]?.ownerFullName || username
-  const profilePic = profile.profilePicUrlHD || profile.profilePicUrl || ''
-  const followers = profile.followersCount || 0
+  const profilePic = profile.profilePicUrlHD || profile.profilePicUrl || postItems[0]?.ownerProfilePicUrl || ''
+  const followers = profile.followersCount || profile.followersNum || 0
 
   return {
     username: username.replace('@', ''),
@@ -115,7 +123,7 @@ function processInstagram(username: string, profileItems: any[], postItems: any[
     displayName,
     profilePic,
     followers,
-    totalLikes: posts.reduce((s: number, p: any) => s + (p.likesCount || 0), 0),
+    totalLikes: posts.reduce((s: number, p: any) => s + (p.likesCount || p.likeCount || 0), 0),
     totalViews,
     avgViews: videoItems.length ? Math.round(totalViews / videoItems.length) : 0,
     postCount: posts.length,
@@ -161,15 +169,15 @@ export async function POST(request: NextRequest) {
       if (!data) return Response.json({ error: 'No data returned — account may be private or not found' }, { status: 404 })
       return Response.json(data)
     } else {
-      // Run profile + posts in parallel — profile gives followers, posts give content
+      // Run profile + posts in parallel
+      // - apify/instagram-profile-scraper: dedicated profile actor, returns followersCount reliably
+      // - apify/instagram-scraper: for post content
       const [profileItems, postItems] = await Promise.all([
-        runAndGetItems('apify~instagram-scraper', {
-          directUrls: [`https://www.instagram.com/${username}/`],
-          resultsType: 'details',
-          resultsLimit: 1,
+        runAndGetItems('apify~instagram-profile-scraper', {
+          usernames: [username],
         }),
         runAndGetItems('apify~instagram-scraper', {
-          directUrls: [`https://www.instagram.com/${username}/`],
+          usernames: [username],
           resultsType: 'posts',
           resultsLimit: 12,
         }),
