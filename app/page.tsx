@@ -50,6 +50,23 @@ function fmt(n: number): string {
   return String(n)
 }
 
+// Strips any URL format down to just the bare username
+function cleanHandle(raw: string): string {
+  const s = raw.trim()
+  if (!s) return ''
+  try {
+    // Handle full URLs like https://www.instagram.com/emmystudyz?igsh=...
+    // or https://www.tiktok.com/@emmystudyz?_r=1
+    const url = new URL(s.startsWith('http') ? s : `https://x.com/${s}`)
+    // First path segment after the domain, strip leading @
+    const seg = url.pathname.split('/').filter(Boolean)[0] || ''
+    return seg.replace('@', '')
+  } catch {
+    // Not a URL — just strip @ and whitespace
+    return s.replace('@', '').split('?')[0].split('/')[0]
+  }
+}
+
 const DEFAULT_IG = ['', '', '', '']
 const DEFAULT_TT = ['', '', '', '']
 
@@ -291,10 +308,12 @@ export default function Dashboard() {
   const buildAccounts = useCallback((ig: string[], tt: string[]): AccountState[] => {
     const all: AccountState[] = []
     ig.forEach(u => {
-      if (u.trim()) all.push({ username: u.trim().replace('@', ''), platform: 'instagram', data: null, status: 'idle', error: null })
+      const clean = cleanHandle(u)
+      if (clean) all.push({ username: clean, platform: 'instagram', data: null, status: 'idle', error: null })
     })
     tt.forEach(u => {
-      if (u.trim()) all.push({ username: u.trim().replace('@', ''), platform: 'tiktok', data: null, status: 'idle', error: null })
+      const clean = cleanHandle(u)
+      if (clean) all.push({ username: clean, platform: 'tiktok', data: null, status: 'idle', error: null })
     })
     return all
   }, [])
@@ -307,8 +326,10 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, platform }),
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Failed to fetch')
+      const text = await res.text()
+      let json: any
+      try { json = JSON.parse(text) } catch { throw new Error(`Server error (${res.status}): ${text.slice(0, 200)}`) }
+      if (!res.ok) throw new Error(json.error || `Server error ${res.status}`)
       setAccounts(prev => prev.map((a, i) => i === index ? { ...a, status: 'done', data: json, error: null } : a))
     } catch (err: any) {
       setAccounts(prev => prev.map((a, i) => i === index ? { ...a, status: 'error', error: err.message } : a))

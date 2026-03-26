@@ -108,15 +108,33 @@ function processInstagram(username: string, items: any[]) {
   }
 }
 
+// Strip URLs down to bare username server-side as a safety net
+function extractUsername(raw: string): string {
+  const s = (raw || '').trim()
+  try {
+    const url = new URL(s.startsWith('http') ? s : `https://x.com/${s}`)
+    const seg = url.pathname.split('/').filter(Boolean)[0] || ''
+    return seg.replace('@', '')
+  } catch {
+    return s.replace('@', '').split('?')[0].split('/')[0]
+  }
+}
+
 export async function POST(request: NextRequest) {
   if (!APIFY_TOKEN) {
     return Response.json({ error: 'APIFY_API_KEY not set in .env.local' }, { status: 500 })
   }
-  const { username, platform } = await request.json()
+  let body: any
+  try { body = await request.json() } catch {
+    return Response.json({ error: 'Invalid request body' }, { status: 400 })
+  }
+  const username = extractUsername(body.username || '')
+  const platform = body.platform
+  if (!username) return Response.json({ error: 'No username provided' }, { status: 400 })
   try {
     if (platform === 'tiktok') {
       const { runId, datasetId } = await startRun('clockworks~tiktok-scraper', {
-        profiles: [`https://www.tiktok.com/@${username.replace('@', '')}`],
+        profiles: [`https://www.tiktok.com/@${username}`],
         resultsType: 'videos',
         resultsPerPage: 12,
       })
@@ -127,7 +145,7 @@ export async function POST(request: NextRequest) {
       return Response.json(data)
     } else {
       const { runId, datasetId } = await startRun('apify~instagram-scraper', {
-        usernames: [username.replace('@', '')],
+        usernames: [username],
         resultsType: 'posts',
         resultsLimit: 12,
       })
